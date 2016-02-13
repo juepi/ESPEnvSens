@@ -6,3 +6,9 @@ Cheap ESP8266 boards have been used for my implementation, by now it works quite
 
 The sensor boxes use 4x AA Batteries / accumulators as a power source, a small DC/DC converter from Pololu (D24V5F3) is used to provide 3.3V to the ESP and sensors.
 Note that due to this setup, the Battery voltage readout done by the code is pretty useless, as it will always report 3.3V until the battery is 100% dead and ESP will not start any longer. This could be avoided by directly reading the battery pack voltage through a suitable voltage divider (connected to the ESP ADC pin), but as i wanted to keep the hardware setup simple (see photos), i have not implemented this (yet).
+
+The Code is pretty self-explaining and well commented (hopefully).
+Both sensors are using a DHT22 for Temperature and Humidity readings, outdoor sensor uses an additional BMP180 sensor for barometric pressure reading. Indoor Sensor code has some additional debugging and error handling code.
+
+Have fun,
+Juergen
