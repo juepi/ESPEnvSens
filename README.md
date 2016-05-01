@@ -10,5 +10,7 @@ Note that due to this setup, the Battery voltage readout done by the code is pre
 The Code is pretty self-explaining and well commented (hopefully).
 Both sensors are using a DHT22 for Temperature and Humidity readings, outdoor sensor uses an additional BMP180 sensor for barometric pressure reading. Indoor Sensor code has some additional debugging and error handling code (watchdog timer).
 
+Note on battery usage: The outdoor sensor (BMP180+DHT22) batteries last for ~ 5 weeks (using 4x Noname AA Alkaline Batteries). It might be possible to optimize this by powering the sensors through ESP GPIOs (instead of wiring them directly to the 3.3V power source), as this will completely power off the sensors while ESP is sleeping.
+
 Have fun,
 Juergen
