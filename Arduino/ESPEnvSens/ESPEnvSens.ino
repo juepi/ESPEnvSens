@@ -2,7 +2,10 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <DHT.h>
+#include <Wire.h>
+#include <Adafruit_BMP085.h>
 
+// ESP Function to read battery voltage
 extern "C" {
   uint16 readvdd33(void);
   #include "user_interface.h"
@@ -12,13 +15,82 @@ extern "C" {
  * Variables and configuration
  */
 
+// ****** DEBUG Settings **********
 // Enable (define) ESP deepSleep in normal Operation
 #define DEEPSLEEP
 
 // Enable (define) Serial Port for Debugging
 //#define SerialEnabled
+// ********************************
 
-// Data wire is plugged into port GPIO4 on the ESP8266
+// ****** INDOOR / OUTDOOR Sensor Selection and settings *************
+#define OUTDOOR //if not defined, INDOOR sensor will be compiled
+
+#ifdef OUTDOOR
+  // OUTDOOR Sensor Settings
+  // BMP180 barometric pressure sensor
+  // I2C Pin definitions
+  #define I2C_SDA 2
+  #define I2C_SCL 14
+  // Setup BMP instance
+  Adafruit_BMP085 bmp;
+  // Air Pressure Variable
+  float QFE = 105000;
+  
+  //WLAN Configuration
+  WiFiClient Outdoorpj;
+  const char* ssid = "xy";
+  const char* password = "abc";
+  
+  // MQTT Stuff
+  // MQTT_KEEP_ALIVE has been increased to 1800sec in PubSubClient.h
+  PubSubClient mqttClt(Outdoorpj);
+  #define mqtt_server "192.168.152.7"
+  #define mqtt_Client "temp-out.mik"
+  #define humidity_topic "HB7/Outdoor/RH"
+  #define temperature_topic "HB7/Outdoor/Temp"
+  #define airpress_topic "HB7/Outdoor/AirPress"
+  #define voltage_topic "HB7/Outdoor/Vbat"
+  #define status_topic "HB7/Outdoor/Status"
+  const char* OK_Status = "online";
+  const char* LWT_Status = "offline";
+  const int LWT_QoS = 0;
+  const int LWT_Retain = 1;
+  
+  // DeepSleep Time MicroSec (5 minutes)
+  #define DeepSleepTime 306000000
+
+
+#else
+  // INDOOR Sensor Settings
+  //WLAN Configuration
+  WiFiClient IndoorWZ;
+  const char* ssid = "xy";
+  const char* password = "abc";
+  
+  // MQTT Stuff
+  // MQTT_KEEP_ALIVE has been increased to 1800sec in PubSubClient.h !!!
+  PubSubClient mqttClt(IndoorWZ);
+  #define mqtt_server "192.168.152.7"
+  #define mqtt_Client "temp-wz.mik"
+  #define humidity_topic "HB7/Indoor/WZ/RH"
+  #define temperature_topic "HB7/Indoor/WZ/Temp"
+  #define voltage_topic "HB7/Indoor/WZ/Vbat"
+  #define status_topic "HB7/Indoor/WZ/Status"
+  const char* OK_Status = "online";
+  const char* LWT_Status = "offline";
+  const int LWT_QoS = 0;
+  const int LWT_Retain = 1;
+  
+  // DeepSleep Time MicroSec (5 minutes)
+  #define DeepSleepTime 306000000
+
+#endif
+// ********************************************************
+
+// ********** More COMMON SETTINGS *****************
+
+// Data wire of DHT22 is plugged into port GPIO4 on the ESP8266
 #define DHTTYPE DHT22   // DHT 22  (AM2302), AM2321
 #define DHTPIN 4
 
@@ -28,40 +100,16 @@ extern "C" {
 #define LEDON LOW
 #define LEDOFF HIGH
 
-// DeepSleep Time MicroSec (5 minutes)
-#define DeepSleepTime 306000000
-
-
 // OS Timer for Software Watchdog
 os_timer_t WDTimer;
 bool ProgramResponding = true;
 // WDT will trigger every 5 seconds
 #define WDTIMEOUT 5000
 
-
-//WLAN Configuration
-WiFiClient IndoorWZ;
-const char* ssid = "";
-const char* password = "";
-
-// MQTT Stuff
-// MQTT_KEEP_ALIVE has been increased to 1800sec in PubSubClient.h !!!
-PubSubClient mqttClt(IndoorWZ);
-#define mqtt_server "192.168.152.7"
-#define mqtt_Client "temp-wz.mik"
-#define humidity_topic "HB7/Indoor/WZ/RH"
-#define temperature_topic "HB7/Indoor/WZ/Temp"
-#define voltage_topic "HB7/Indoor/WZ/Vbat"
-#define status_topic "HB7/Indoor/WZ/Status"
-const char* OK_Status = "online";
-const char* LWT_Status = "offline";
-const int LWT_QoS = 0;
-const int LWT_Retain = 1;
-
 // Setup a DHT instance
 DHT dht(DHTPIN, DHTTYPE);
 
-// Room Temperature from DHT22
+// Temperature from DHT22
 float Temp;
 
 // Rel. Humidity from DHT22
@@ -70,9 +118,10 @@ float RH;
 // Battery Voltage (milliVolt)
 int vdd = 3123;
 
-
-// Maximum connection attempts to broker before going to sleep
+// Maximum connection attempts to MQTT broker before going to sleep
 const int MaxConnAttempts = 3;
+
+// *****************************************************
 
 
 /*
@@ -173,7 +222,22 @@ void setup(void)
   os_timer_setfn(&WDTimer, WDTCallback, NULL);
   os_timer_arm(&WDTimer, WDTIMEOUT, true);
   ProgramResponding = true;
+
+  // OUTDOOR Sensor only
+  #ifdef OUTDOOR
+  // Initialize I2C
+  Wire.begin(I2C_SDA,I2C_SCL);
   
+  // Initialize BMP180
+  if (!bmp.begin())
+  {
+  #ifdef SerialEnabled
+  Serial.println("Could not find a valid BMP180 sensor, check wiring!");
+  #endif
+  delay(10000);
+  }
+  #endif
+
   // Initialize DHT22
   dht.begin();
 
@@ -229,7 +293,7 @@ void loop(void)
     RH = dht.readHumidity();
     Temp = dht.readTemperature();
     if (isnan(RH) || isnan(Temp)) {
-      delay(2500);
+      delay(1500);
       ProgramResponding = true;
       continue;
     }
@@ -251,6 +315,17 @@ void loop(void)
 
   // WDT: Program is still running..
   ProgramResponding = true;
+
+  //OUTDOOR Sensor only
+  // Read barometric pressure from BMP180
+  #ifdef OUTDOOR
+    QFE = bmp.readPressure();
+    
+    #ifdef SerialEnabled
+    Serial.print("AirPress=");
+    Serial.println(QFE); 
+    #endif
+  #endif
 
   if (!mqttClt.connected())
   {
@@ -294,6 +369,10 @@ void loop(void)
   mqttClt.publish(humidity_topic, String(RH).c_str(), true);
   mqttClt.publish(voltage_topic, String(vdd).c_str(), true);
   mqttClt.publish(status_topic, String(OK_Status).c_str(), true);
+  // OUTDOOR Sensor only
+  #ifdef OUTDOOR
+    mqttClt.publish(airpress_topic, String(QFE).c_str(), true);
+  #endif
   // do NOT disconnect from broker, or LWT settings will not work
   //mqttClt.disconnect();
   #ifdef SerialEnabled
