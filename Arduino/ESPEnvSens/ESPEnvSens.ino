@@ -20,7 +20,7 @@ extern "C" {
 #define DEEPSLEEP
 
 // Enable (define) Serial Port for Debugging
-//#define SerialEnabled
+#define SerialEnabled
 // ********************************
 
 // ****** INDOOR / OUTDOOR Sensor Selection and settings *************
@@ -39,11 +39,10 @@ extern "C" {
   
   //WLAN Configuration
   WiFiClient Outdoorpj;
-  const char* ssid = "xy";
-  const char* password = "abc";
+  const char* ssid = "***";
+  const char* password = "****";
   
   // MQTT Stuff
-  // MQTT_KEEP_ALIVE has been increased to 1800sec in PubSubClient.h
   PubSubClient mqttClt(Outdoorpj);
   #define mqtt_server "192.168.152.7"
   #define mqtt_Client "temp-out.mik"
@@ -52,24 +51,21 @@ extern "C" {
   #define airpress_topic "HB7/Outdoor/AirPress"
   #define voltage_topic "HB7/Outdoor/Vbat"
   #define status_topic "HB7/Outdoor/Status"
-  const char* OK_Status = "online";
-  const char* LWT_Status = "offline";
-  const int LWT_QoS = 0;
-  const int LWT_Retain = 1;
+  #define Interval_topic "HB7/Indoor/WZ/Interval"
+  const char* OK_Status = "DataUpdated";
   
-  // DeepSleep Time MicroSec (5 minutes)
-  #define DeepSleepTime 306000000
+  // Default DeepSleep Time in Minutes
+  int DeepSleepTime = 15;
 
 
 #else
   // INDOOR Sensor Settings
   //WLAN Configuration
   WiFiClient IndoorWZ;
-  const char* ssid = "xy";
-  const char* password = "abc";
+  const char* ssid = "***";
+  const char* password = "******";
   
   // MQTT Stuff
-  // MQTT_KEEP_ALIVE has been increased to 1800sec in PubSubClient.h !!!
   PubSubClient mqttClt(IndoorWZ);
   #define mqtt_server "192.168.152.7"
   #define mqtt_Client "temp-wz.mik"
@@ -77,13 +73,11 @@ extern "C" {
   #define temperature_topic "HB7/Indoor/WZ/Temp"
   #define voltage_topic "HB7/Indoor/WZ/Vbat"
   #define status_topic "HB7/Indoor/WZ/Status"
-  const char* OK_Status = "online";
-  const char* LWT_Status = "offline";
-  const int LWT_QoS = 0;
-  const int LWT_Retain = 1;
+  #define Interval_topic "HB7/Indoor/WZ/Interval"
+  const char* OK_Status = "DataUpdated";
   
-  // DeepSleep Time MicroSec (5 minutes)
-  #define DeepSleepTime 306000000
+  // Default DeepSleep Time in Minutes
+  int DeepSleepTime = 15;
 
 #endif
 // ********************************************************
@@ -95,7 +89,7 @@ extern "C" {
 #define DHTPIN 4
 
 // Status LED on GPIO2 (LED inverted!)
-#define USELED //does not work on white ESP-boards - do not define this to disable LED signalling
+//#define USELED //does not work on ESP-201 boards - do not define this to disable LED signalling
 #define LED 2
 #define LEDON LOW
 #define LEDOFF HIGH
@@ -139,7 +133,7 @@ bool ConnectToBroker()
     Serial.print("Attempting MQTT connection...");
     #endif
     // Attempt to connect
-    if (mqttClt.connect(mqtt_Client,status_topic,LWT_QoS,LWT_Retain,LWT_Status))
+    if (mqttClt.connect(mqtt_Client))
     {
       #ifdef SerialEnabled
       Serial.println("connected");
@@ -152,6 +146,8 @@ bool ConnectToBroker()
       Serial.println(mqttClt.state());
       Serial.println("Sleeping 5 seconds..");
       #endif
+      // Program is still running
+      ProgramResponding = true;
       // Wait 1 seconds before retrying
       delay(1000);
       ConnAttempt++;
@@ -177,10 +173,11 @@ void WDTCallback(void *pArg)
 {
   if (ProgramResponding)
   {
+    // If ProgramResponding is not reset to true before next WDT trigger..
     ProgramResponding = false;
     return;
   }
-  // ProgramResponding already false - program dead, go to DeepSleep
+  // ..program is proably dead, go to DeepSleep
   #ifdef USELED
   // signal SOS
   digitalWrite(LED, LEDOFF);
@@ -193,12 +190,38 @@ void WDTCallback(void *pArg)
   Serial.println("Watchdog Timer detected program not responding, going to sleep!");
   #endif
   #ifdef DEEPSLEEP
-  ESP.deepSleep(DeepSleepTime);
+  ESP.deepSleep(DeepSleepTime * 60000000);
   #endif
+  delay(100);
+}
+
+//MQTT Subscription callback function
+void MqttCallback(char* topic, byte* payload, unsigned int length)
+{
+  #ifdef SerialEnabled
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+  #endif
+
+  String s = String((char*)payload);
+  int IntPayLd = s.toInt();
+  if ((IntPayLd >= 5) && (IntPayLd <= 120))
+  {
+    #ifdef SerialEnabled
+    Serial.print("New DeepSleep interval [min]: ");
+    Serial.println(IntPayLd);
+    #endif
+    DeepSleepTime = IntPayLd;
+  }
 }
 
 
-
+// ===================================================================================================================
 /*
  * Setup function. Here we do the basics
  */
@@ -269,7 +292,7 @@ void setup(void)
 
   // Setup MQTT
   mqttClt.setServer(mqtt_server, 1883);
-
+  mqttClt.setCallback(MqttCallback);
   #ifdef USELED
   // Setup finished, WLAN connected - blink once
   ToggleLed(LED,100,2);
@@ -277,6 +300,7 @@ void setup(void)
 }
 
 
+// ===============================================================================================
 /*
  * Main function.
  */
@@ -333,7 +357,7 @@ void loop(void)
     {
       // Failed to connect to broker
       #ifdef DEEPSLEEP
-      ESP.deepSleep(DeepSleepTime);
+      ESP.deepSleep(DeepSleepTime * 60000000);
       #endif
       #ifdef SerialEnabled
       Serial.println("3 connection attempts to broker failed, sleeping 10 seconds..");
@@ -342,12 +366,15 @@ void loop(void)
       return;
     }
   }
-  
+
   #ifdef USELED
   // Connected to broker - blink three times
   ToggleLed(LED,100,6);
   #endif
 
+  // Subscribe to Interval Topic
+  mqttClt.subscribe(Interval_topic);
+  
   #ifdef SerialEnabled
   Serial.print("TempC = ");
   Serial.println(Temp);
@@ -373,8 +400,7 @@ void loop(void)
   #ifdef OUTDOOR
     mqttClt.publish(airpress_topic, String(QFE).c_str(), true);
   #endif
-  // do NOT disconnect from broker, or LWT settings will not work
-  //mqttClt.disconnect();
+  mqttClt.disconnect();
   #ifdef SerialEnabled
   Serial.println("Done, going to sleep.");
   #endif
