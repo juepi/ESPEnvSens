@@ -1,6 +1,6 @@
-/*  *****************   ESPEnvSens *****************************
+/*  *****************   ESPEnvSens **************************************
  *  Author: jpichlbauer
- *  Date: 2016-09-24
+ *  Date: 2016-09-26
  *  
  *  Arduino Sketch for environmental monitoring using
  *  ESP8266, DHT22 and BMP180 devices.
@@ -14,7 +14,12 @@
  *  To be able to use DeepSleep, you will have to wire GPIO16
  *  to RESET. RealTimeClock of ESP8266 will trigger a RESET
  *  after DeepSleepTime to wake the ESP.
- *  ************************************************************
+ *  
+ *  NOTE for flashing ESP modules (might only be true for my modules):
+ *  ==================================================================
+ *  o Flashing ESP-201 ONLY works with external power source!
+ *  o Flashing ESP-12 ONLY works when using UART-Adapters power source!
+ *  ********************************************************************
  */
 
 // Include the libraries we need
@@ -49,7 +54,7 @@ extern "C" {
  * OUTDOOR Sensor additionally uses BMP180 for barometric pressure
  */
 
-//#define OUTDOOR //if not defined, INDOOR sensor will be compiled
+#define OUTDOOR //if not defined, INDOOR sensor will be compiled
 
 #ifdef OUTDOOR
   // OUTDOOR Sensor Settings
@@ -130,8 +135,8 @@ int vdd = 3123;
 // OS Timer for Software Watchdog
 os_timer_t WDTimer;
 bool ProgramResponding = true;
-// WDT will trigger every 5 seconds
-#define WDTIMEOUT 5000
+// WDT will trigger every 10 seconds
+#define WDTIMEOUT 10000
 
 
 /*
@@ -184,6 +189,7 @@ void MqttCallback(char* topic, byte* payload, unsigned int length)
   Serial.println(msgString);
   #endif
 
+  // If message is an integer between 5 and 120, use it as new DeepSleepTime
   int IntPayLd = msgString.toInt();
   if ((IntPayLd >= 5) && (IntPayLd <= 120))
   {
@@ -202,7 +208,7 @@ void MqttCallback(char* topic, byte* payload, unsigned int length)
  * must be done before setting up ConnectToBroker function and after MqttCallback Function
  * to avoid compilation errors
  */
-PubSubClient mqttClt(mqtt_server,1833,MqttCallback,EnvSensWiFi);
+PubSubClient mqttClt(mqtt_server,1883,MqttCallback,EnvSensWiFi);
 
 
 /*
@@ -264,6 +270,8 @@ void setup(void)
   #ifdef SerialEnabled
   // start serial port and digital Outputs
   Serial.begin(115200);
+  Serial.println();
+  Serial.println();
   #ifdef OUTDOOR
     Serial.println("ESP8266 WLAN Environmental Monitor - HB7 OUTDOOR");
   #else
@@ -336,7 +344,9 @@ void setup(void)
       Serial.print("Subscribed to ");
       Serial.println(Interval_topic);
       #endif
-      delay(100);
+      delay(200);
+      // try to get a message from topic..
+      mqttClt.loop();
     }
     else
     {
@@ -455,6 +465,8 @@ void loop(void)
     
     // initiate deep sleep
     #ifdef DEEPSLEEP
+    // Disconnect WiFi and go to Sleep
+    WiFi.disconnect();
     ESP.deepSleep(DeepSleepTime * 60000000);
     delay(100);
     #endif
@@ -478,6 +490,8 @@ void loop(void)
     Serial.println("FATAL: connection to broker lost in main loop!");
     #endif
     #ifdef DEEPSLEEP
+    // disconnect WiFi and go to sleep
+    WiFi.disconnect();
     ESP.deepSleep(DeepSleepTime * 60000000);
     #endif
     delay(100);
